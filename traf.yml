@@ -4,6 +4,9 @@ services:
   reverse-proxy:
     image: traefik:v2.0.2
     command:
+      - "--api.insecure=true" # set to 'false' on production
+      - "--api.dashboard=true" # see https://docs.traefik.io/v2.0/operations/dashboard/ #secure-mode for how to secure the dashboard
+      - "--api.debug=true" # enable additional endpoints for debugging and profiling
       - "--providers.docker.endpoint=unix:///var/run/docker.sock"
       - "--providers.docker.swarmMode=true"
       - "--providers.docker.exposedbydefault=false"
@@ -28,6 +31,19 @@ services:
       placement:
         constraints:
           - node.role == manager
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.api.rule=Host(`traefik.matera3019.it`)"
+        - "traefik.http.routers.api.service=api@internal"
+        - "traefik.http.routers.api.entrypoints=websecure"
+        - "traefik.http.routers.api.tls.certresolver=letsencryptresolver"
+        - "traefik.http.services.api.loadbalancer.server.port=80"
+
+
+        - "traefik.http.routers.http-catchall.rule=hostregexp({host:.+})"
+        - "traefik.http.routers.http-catchall.entrypoints=web"
+        - "traefik.http.routers.http-catchall.middlewares=redirect-to-https@docker"
+        - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
 volumes:
   traefik-certificates:
 networks:
