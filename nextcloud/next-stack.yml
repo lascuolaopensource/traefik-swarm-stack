@@ -1,0 +1,91 @@
+version: "3.0"
+
+services:
+  nextcloud:
+    image: nextcloud
+    env_file: ./nextcloud.env
+    networks:
+      - internal
+      - traefik-public
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.nextcloud.rule=Host(`nextcloud.matera3019.it`)"
+        - "traefik.http.routers.nextcloud.entrypoints=websecure"
+        - "traefik.http.routers.nextcloud.tls.certresolver=letsencryptresolver"
+        - "traefik.http.services.nextcloud.loadbalancer.server.port=80"
+    volumes:
+    - nextcloud-html:/var/www/html
+    - nextcloud-apps:/var/www/html/custom_apps
+    - nextcloud-config:/var/www/html/config
+    - nextcloud-data:/var/www/html/data
+
+  db:
+    image: mariadb:10
+    env_file: ./nextcloud.env
+    networks:
+      - internal
+    volumes:
+      - nextcloud-db:/var/lib/mysql
+
+  db-backup:
+    image: mariadb:10
+    env_file: ./nextcloud-db-backup.env
+    volumes:
+      - nextcloud-dump:/dump
+      - /etc/localtime:/etc/localtime:ro
+    entrypoint: |
+      bash -c 'bash -s <<EOF
+      trap "break;exit" SIGHUP SIGINT SIGTERM
+      sleep 2m
+      while /bin/true; do
+        mysqldump -h db --all-databases | gzip -c > /dump/dump_\date +%d-%m-%Y"_"%H_%M_%S\.sql.gz
+        (ls -t /dump/dump*.sql.gz|head -n $$BACKUP_NUM_KEEP;ls /dump/dump*.sql.gz)|sort|uniq -u|xargs rm -- {}
+        sleep $$BACKUP_FREQUENCY
+      done
+      EOF'
+    networks:
+    - internal
+
+  redis:
+    image: redis:alpine
+    networks:
+      - internal
+    volumes:
+      - nextcloud-redis:/data
+
+  cron:
+    image: nextcloud
+    volumes:
+      - nextcloud-html:/var/www/html
+    user: www-data
+    networks:
+      - internal
+    entrypoint: |
+      bash -c 'bash -s <<EOF
+        trap "break;exit" SIGHUP SIGINT SIGTERM
+        while [ ! -f /var/www/html/config/config.php ]; do
+          sleep 1
+        done
+        while true; do
+          php -f /var/www/html/cron.php
+          sleep 15m
+        done
+      EOF'
+
+volumes:
+  nextcloud-db:
+  nextcloud-dump:
+  nextcloud-redis:
+  nextcloud-html:
+  nextcloud-apps:
+  nextcloud-config:
+  nextcloud-data:
+networks:
+  traefik-public:
+    external: true
+  internal:
+    driver: overlay
+    ipam:
+      config:
+        - subnet: 172.16.12.0/24
